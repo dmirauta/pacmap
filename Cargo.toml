@@ -1,0 +1,11 @@
+[package]
+name = "pacmap"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+egui_inspect = { git = "https://github.com/dmirauta/egui_inspect", branch = "0_27" }
+eframe = "0.27"
+egui = "0.27"
