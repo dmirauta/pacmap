@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, process::Command};
+use std::{cell::RefCell, collections::HashMap, process::Command, str::FromStr};
 
 use egui_inspect::{
     quick_app::{IntoApp, QuickApp},
@@ -31,9 +31,31 @@ impl EguiInspect for PackageName {
     }
 }
 
+#[derive(EguiInspect, Default, Debug)]
+struct OptionalDep {
+    package_name: String,
+    reason: String,
+}
+
+impl FromStr for OptionalDep {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut sp = s.split(": ");
+        match (sp.next(), sp.next()) {
+            (Some(package_name), Some(reason)) => Ok(Self {
+                package_name: package_name.trim().to_string(),
+                reason: reason.into(),
+            }),
+            _ => Err("Unexpected OptionalDep format".into()),
+        }
+    }
+}
+
 #[derive(Debug, EguiInspect, Default)]
 struct PackageInfo {
     depends: Vec<PackageName>,
+    optional: Vec<OptionalDep>,
     required_by: Vec<PackageName>,
     other: HashMap<String, String>,
 }
@@ -47,36 +69,54 @@ fn sssv(s: String) -> Vec<PackageName> {
 
 fn pacman_queery(name: &str) -> Option<(String, PackageInfo)> {
     let out = Command::new("pacman").arg("-Qi").arg(name).output();
-    out.map(|o| {
-        let package_info = String::from_utf8(o.stdout).unwrap();
-        PackageInfo::parse(package_info)
-    })
-    .map_err(|e| dbg!(e))
-    .ok()
+    match out {
+        Ok(o) => {
+            let package_info = String::from_utf8(o.stdout).unwrap();
+            if package_info.is_empty() || &package_info[..=6] == "error:" {
+                None
+            } else {
+                Some(PackageInfo::parse(package_info))
+            }
+        }
+        Err(e) => {
+            dbg!(e);
+            None
+        }
+    }
 }
 
 impl PackageInfo {
     fn parse(s: String) -> (String, Self) {
-        let mut other: HashMap<String, String> = s
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| {
-                let mut sp = l.split(" : ");
-                (
-                    sp.next().unwrap().trim().into(),
-                    sp.next().unwrap().trim().into(),
-                )
-            })
-            .collect();
+        let mut other = HashMap::new();
+        let mut optional = vec![];
 
-        let name = other.remove("Name").unwrap();
-        let depends = sssv(other.remove("Depends On").unwrap());
-        let required_by = sssv(other.remove("Required By").unwrap());
+        for l in s.lines().filter(|l| !l.is_empty()) {
+            let mut sp = l.split(" : ");
+            let key = sp.next();
+            let val = sp.next();
+            if let Some(v) = val {
+                let k: String = key.unwrap().into();
+                if k != "Optional Deps" {
+                    other.insert(k.trim().into(), v.into());
+                } else {
+                    optional.push(v.parse().unwrap());
+                }
+            } else {
+                let k: String = key.unwrap().into();
+                optional.push(k.parse().unwrap());
+            }
+        }
+
+        let failure = format!("Failed parsing {s}");
+        let name = other.remove("Name").expect(failure.as_str());
+        let depends = sssv(other.remove("Depends On").expect(failure.as_str()));
+        let required_by = sssv(other.remove("Required By").expect(failure.as_str()));
 
         (
             name,
             Self {
                 depends,
+                optional,
                 required_by,
                 other,
             },
@@ -118,10 +158,9 @@ impl EguiInspect for Pacmap {
                 if !pis.contains_key(&next_s) {
                     if let Some((name, pi)) = pacman_queery(next_s.as_str()) {
                         pis.insert(name, pi);
+                        self.current = next_s;
                     }
                 }
-
-                self.current = next_s;
             }
         });
     }
