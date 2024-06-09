@@ -1,16 +1,14 @@
 use std::{cell::RefCell, collections::HashMap, process::Command, str::FromStr};
 
-use egui_inspect::{
-    quick_app::{IntoApp, QuickApp},
-    EguiInspect,
-};
+use egui_inspect::{EframeMain, EguiInspect};
+
+use clap::Parser;
 
 thread_local! {
-    static PACKAGE_INFOS: RefCell<HashMap<String, PackageInfo>> = Default::default();
     static NEXT: RefCell<Option<String>> = Default::default();
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct PackageName(String);
 
 impl From<String> for PackageName {
@@ -67,8 +65,11 @@ fn sssv(s: String) -> Vec<PackageName> {
         .collect()
 }
 
-fn pacman_queery(name: &str) -> Option<(String, PackageInfo)> {
-    let out = Command::new("pacman").arg("-Qi").arg(name).output();
+fn pacman_queery(name: impl AsRef<str>) -> Option<(String, PackageInfo)> {
+    let out = Command::new("pacman")
+        .arg("-Qi")
+        .arg(name.as_ref())
+        .output();
     match out {
         Ok(o) => {
             let package_info = String::from_utf8(o.stdout).unwrap();
@@ -124,22 +125,34 @@ impl PackageInfo {
     }
 }
 
+#[derive(Parser)]
+struct PacmapArgs {
+    #[arg(short, long)]
+    /// Package first highlighted
+    starting_package: Option<String>,
+}
+
+#[derive(EframeMain)]
 struct Pacmap {
     current: String,
+    package_infos: HashMap<String, PackageInfo>,
+    history: Vec<PackageName>,
 }
 
 impl Default for Pacmap {
     fn default() -> Self {
-        PACKAGE_INFOS.with_borrow_mut(|pis| {
-            if !pis.contains_key("pacman") {
-                if let Some((name, pi)) = pacman_queery("pacman") {
-                    pis.insert(name, pi);
-                }
-            }
-        });
+        let args = PacmapArgs::parse();
+        let current = args.starting_package.unwrap_or("pacman".into());
+
+        let mut package_infos = HashMap::new();
+        if let Some((name, pi)) = pacman_queery(current.as_str()) {
+            package_infos.insert(name, pi);
+        }
 
         Self {
-            current: "pacman".into(),
+            history: vec![PackageName(current.clone())],
+            package_infos,
+            current,
         }
     }
 }
@@ -150,24 +163,27 @@ impl EguiInspect for Pacmap {
     }
 
     fn inspect_mut(&mut self, _label: &str, ui: &mut egui::Ui) {
-        PACKAGE_INFOS.with_borrow_mut(|pis| {
-            pis.get(&self.current)
-                .map(|pi| pi.inspect(self.current.as_str(), ui));
+        ui.columns(2, |columns| {
+            match self.package_infos.get(&self.current) {
+                Some(pi) => pi.inspect(self.current.as_str(), &mut columns[0]),
+                None => format!(
+                    "No package info for {}, relaunch with a different starting package.",
+                    &self.current
+                )
+                .inspect("", &mut columns[0]),
+            }
 
             if let Some(next_s) = NEXT.with_borrow_mut(|n| n.take()) {
-                if !pis.contains_key(&next_s) {
+                if !self.package_infos.contains_key(&next_s) {
                     if let Some((name, pi)) = pacman_queery(next_s.as_str()) {
-                        pis.insert(name, pi);
-                        self.current = next_s;
+                        self.package_infos.insert(name, pi);
                     }
                 }
+                self.history.push(PackageName(next_s.clone()));
+                self.current = next_s;
             }
+
+            self.history.inspect("selection history", &mut columns[1]);
         });
     }
-}
-
-impl IntoApp for Pacmap {}
-
-fn main() -> eframe::Result<()> {
-    QuickApp::<Pacmap>::run()
 }
