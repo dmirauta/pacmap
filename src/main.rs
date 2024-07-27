@@ -1,8 +1,11 @@
 use std::{cell::RefCell, collections::HashMap, process::Command, str::FromStr};
 
+use egui::{Pos2, Vec2};
+use egui_graphs::{Graph, GraphView, Node, SettingsInteraction, SettingsNavigation, SettingsStyle};
 use egui_inspect::{EframeMain, EguiInspect};
 
 use clap::Parser;
+use petgraph::{graph::NodeIndex, stable_graph::StableGraph};
 
 thread_local! {
     static NEXT: RefCell<Option<String>> = Default::default();
@@ -29,7 +32,7 @@ impl EguiInspect for PackageName {
     }
 }
 
-#[derive(EguiInspect, Default, Debug)]
+#[derive(EguiInspect, Default, Debug, Clone)]
 struct OptionalDep {
     package_name: String,
     reason: String,
@@ -50,7 +53,8 @@ impl FromStr for OptionalDep {
     }
 }
 
-#[derive(Debug, EguiInspect, Default)]
+// NOTE: Clone added as Graph requirement
+#[derive(Debug, EguiInspect, Default, Clone)]
 struct PackageInfo {
     depends: Vec<PackageName>,
     optional: Vec<OptionalDep>,
@@ -135,8 +139,77 @@ struct PacmapArgs {
 #[derive(EframeMain)]
 struct Pacmap {
     current: String,
-    package_infos: HashMap<String, PackageInfo>,
+    graph_indices: HashMap<String, NodeIndex>,
+    // TODO: Can clone requirement be avoided? Are clones made?
+    package_infos: Graph<Option<PackageInfo>, ()>,
     history: Vec<PackageName>,
+}
+
+impl Pacmap {
+    fn add_package(&mut self, name: String, pio: Option<PackageInfo>, pos: Pos2) -> NodeIndex {
+        match self.graph_indices.get(&name) {
+            Some(gi) => {
+                *self.package_infos.node_mut(*gi).unwrap().payload_mut() = pio;
+                *gi
+            }
+            None => {
+                let gi =
+                    self.package_infos
+                        .add_node_with_label_and_location(pio, name.clone(), pos);
+                self.graph_indices.insert(name, gi);
+                gi
+            }
+        }
+    }
+
+    fn add_package_and_deps(&mut self, name: String, pi: PackageInfo) {
+        let mut base_pos = match self.get_package_node(&self.current) {
+            Some(n) => n.location() + Vec2::new(0.0, -25.0),
+            None => Pos2::ZERO,
+        };
+        let ni = self.add_package(name, Some(pi.clone()), base_pos);
+
+        let sep = 15.0;
+        let n = pi.depends.len() as f32;
+        base_pos -= Vec2::new(sep * n * 0.5, 0.0);
+        for dep in pi.depends.iter() {
+            let di = self.add_package(dep.0.clone(), None, base_pos);
+            self.package_infos
+                .add_edge_with_label(ni, di, (), "".into());
+            base_pos += Vec2::new(sep, 0.0);
+        }
+    }
+
+    fn get_package_node(&self, name: &String) -> Option<&Node<Option<PackageInfo>, ()>> {
+        let gi = self.graph_indices.get(name)?;
+        self.package_infos.g.node_weight(*gi)
+    }
+
+    fn get_package_info(&mut self, name: &String) -> Option<&PackageInfo> {
+        let node = self.get_package_node(name)?;
+
+        if node.payload().is_none() {
+            if let Some((_, pi)) = pacman_queery(name) {
+                self.add_package_and_deps(name.clone(), pi);
+            }
+        };
+
+        let node = self.get_package_node(name)?;
+        node.payload().as_ref()
+    }
+
+    fn inspect_graph(&mut self, ui: &mut egui::Ui) {
+        let interaction_settings = SettingsInteraction::new().with_dragging_enabled(true);
+        let settings_navigation = SettingsNavigation::new()
+            .with_zoom_and_pan_enabled(true)
+            .with_fit_to_screen_enabled(false);
+        let style_settings = SettingsStyle::new().with_labels_always(true);
+        let mut gv = GraphView::<_, _>::new(&mut self.package_infos)
+            .with_styles(&style_settings)
+            .with_interactions(&interaction_settings)
+            .with_navigations(&settings_navigation);
+        ui.add(&mut gv);
+    }
 }
 
 impl Default for Pacmap {
@@ -144,16 +217,18 @@ impl Default for Pacmap {
         let args = PacmapArgs::parse();
         let current = args.starting_package.unwrap_or("pacman".into());
 
-        let mut package_infos = HashMap::new();
+        let mut new = Self {
+            history: vec![PackageName(current.clone())],
+            graph_indices: HashMap::new(),
+            package_infos: Graph::from(&StableGraph::new()),
+            current: current.clone(),
+        };
+
         if let Some((name, pi)) = pacman_queery(current.as_str()) {
-            package_infos.insert(name, pi);
+            new.add_package_and_deps(name, pi);
         }
 
-        Self {
-            history: vec![PackageName(current.clone())],
-            package_infos,
-            current,
-        }
+        new
     }
 }
 
@@ -163,9 +238,10 @@ impl EguiInspect for Pacmap {
     }
 
     fn inspect_mut(&mut self, _label: &str, ui: &mut egui::Ui) {
+        let current = self.current.clone();
         ui.columns(2, |columns| {
-            match self.package_infos.get(&self.current) {
-                Some(pi) => pi.inspect(self.current.as_str(), &mut columns[0]),
+            match self.get_package_info(&current) {
+                Some(pi) => pi.inspect(current.as_str(), &mut columns[0]),
                 None => format!(
                     "No package info for {}, relaunch with a different starting package.",
                     &self.current
@@ -174,16 +250,17 @@ impl EguiInspect for Pacmap {
             }
 
             if let Some(next_s) = NEXT.with_borrow_mut(|n| n.take()) {
-                if !self.package_infos.contains_key(&next_s) {
+                if !self.graph_indices.contains_key(&next_s) {
                     if let Some((name, pi)) = pacman_queery(next_s.as_str()) {
-                        self.package_infos.insert(name, pi);
+                        self.add_package_and_deps(name, pi);
                     }
                 }
                 self.history.push(PackageName(next_s.clone()));
                 self.current = next_s;
             }
 
-            self.history.inspect("selection history", &mut columns[1]);
+            self.history.inspect("selection history", &mut columns[0]);
+            self.inspect_graph(&mut columns[1]);
         });
     }
 }

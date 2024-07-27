@@ -1114,6 +1114,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_graphs"
+version = "0.20.0"
+source = "git+https://github.com/blitzarx1/egui_graphs#39f16299ca955eba3c5f6597bc90f64d64b9202c"
+dependencies = [
+ "egui",
+ "petgraph",
+ "rand",
+]
+
+[[package]]
 name = "egui_inspect"
 version = "0.1.4"
 source = "git+https://github.com/dmirauta/egui_inspect?branch=0_27#78accebebd29dab943b48cd35d4aadcd969f2d6a"
@@ -1263,6 +1273,12 @@ checksum = "4f9bfee30e4dedf0ab8b422f03af778d9612b63f502710fc500a334ebe2de645"
 dependencies = [
  "simd-adler32",
 ]
+
+[[package]]
+name = "fixedbitset"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "flate2"
@@ -2184,7 +2200,9 @@ dependencies = [
  "clap",
  "eframe",
  "egui",
+ "egui_graphs",
  "egui_inspect",
+ "petgraph",
 ]
 
 [[package]]
@@ -2227,6 +2245,16 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
+
+[[package]]
+name = "petgraph"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
+dependencies = [
+ "fixedbitset",
+ "indexmap",
+]
 
 [[package]]
 name = "pin-project-lite"
