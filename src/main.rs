@@ -1,11 +1,15 @@
-use std::{cell::RefCell, collections::HashMap, process::Command, str::FromStr};
+use std::{cell::RefCell, collections::HashMap, f32::consts::PI, process::Command, str::FromStr};
 
-use egui::{Pos2, Vec2};
-use egui_graphs::{Graph, GraphView, Node, SettingsInteraction, SettingsNavigation, SettingsStyle};
-use egui_inspect::{EframeMain, EguiInspect};
+use eframe::run_native;
+use egui::{Pos2, ScrollArea, Vec2};
+use egui_graphs::{GraphView, Node, SettingsInteraction, SettingsNavigation, SettingsStyle};
+use egui_inspect::EguiInspect;
 
 use clap::Parser;
-use petgraph::{graph::NodeIndex, stable_graph::StableGraph};
+use fgraph::EguiForceGraph;
+use petgraph::graph::NodeIndex;
+
+mod fgraph;
 
 thread_local! {
     static NEXT: RefCell<Option<String>> = Default::default();
@@ -108,7 +112,9 @@ impl PackageInfo {
                 }
             } else {
                 let k: String = key.unwrap().into();
-                optional.push(k.parse().unwrap());
+                if let Ok(pi) = k.parse() {
+                    optional.push(pi);
+                }
             }
         }
 
@@ -136,12 +142,11 @@ struct PacmapArgs {
     starting_package: Option<String>,
 }
 
-#[derive(EframeMain)]
 struct Pacmap {
     current: String,
     graph_indices: HashMap<String, NodeIndex>,
     // TODO: Can clone requirement be avoided? Are clones made?
-    package_infos: Graph<Option<PackageInfo>, ()>,
+    package_infos: EguiForceGraph<Option<PackageInfo>, ()>,
     history: Vec<PackageName>,
 }
 
@@ -149,7 +154,12 @@ impl Pacmap {
     fn add_package(&mut self, name: String, pio: Option<PackageInfo>, pos: Pos2) -> NodeIndex {
         match self.graph_indices.get(&name) {
             Some(gi) => {
-                *self.package_infos.node_mut(*gi).unwrap().payload_mut() = pio;
+                *self
+                    .package_infos
+                    .egui_graph
+                    .node_mut(*gi)
+                    .unwrap()
+                    .payload_mut() = pio;
                 *gi
             }
             None => {
@@ -163,26 +173,30 @@ impl Pacmap {
     }
 
     fn add_package_and_deps(&mut self, name: String, pi: PackageInfo) {
-        let mut base_pos = match self.get_package_node(&self.current) {
-            Some(n) => n.location() + Vec2::new(0.0, -25.0),
+        let base_pos = match self.get_package_node(&self.current) {
+            Some(n) => n.location(),
             None => Pos2::ZERO,
         };
         let ni = self.add_package(name, Some(pi.clone()), base_pos);
 
         let sep = 15.0;
         let n = pi.depends.len() as f32;
-        base_pos -= Vec2::new(sep * n * 0.5, 0.0);
-        for dep in pi.depends.iter() {
-            let di = self.add_package(dep.0.clone(), None, base_pos);
+        let dth = PI / n;
+        for (i, dep) in pi.depends.iter().enumerate() {
+            let th = (i as f32) * dth;
+            let di = self.add_package(
+                dep.0.clone(),
+                None,
+                base_pos + sep * Vec2::new(th.cos(), th.sin()),
+            );
             self.package_infos
                 .add_edge_with_label(ni, di, (), "".into());
-            base_pos += Vec2::new(sep, 0.0);
         }
     }
 
     fn get_package_node(&self, name: &String) -> Option<&Node<Option<PackageInfo>, ()>> {
         let gi = self.graph_indices.get(name)?;
-        self.package_infos.g.node_weight(*gi)
+        self.package_infos.egui_graph.g.node_weight(*gi)
     }
 
     fn get_package_info(&mut self, name: &String) -> Option<&PackageInfo> {
@@ -204,7 +218,7 @@ impl Pacmap {
             .with_zoom_and_pan_enabled(true)
             .with_fit_to_screen_enabled(false);
         let style_settings = SettingsStyle::new().with_labels_always(true);
-        let mut gv = GraphView::<_, _>::new(&mut self.package_infos)
+        let mut gv = GraphView::<_, _>::new(&mut self.package_infos.egui_graph)
             .with_styles(&style_settings)
             .with_interactions(&interaction_settings)
             .with_navigations(&settings_navigation);
@@ -220,7 +234,7 @@ impl Default for Pacmap {
         let mut new = Self {
             history: vec![PackageName(current.clone())],
             graph_indices: HashMap::new(),
-            package_infos: Graph::from(&StableGraph::new()),
+            package_infos: EguiForceGraph::empty(),
             current: current.clone(),
         };
 
@@ -232,35 +246,56 @@ impl Default for Pacmap {
     }
 }
 
-impl EguiInspect for Pacmap {
-    fn inspect(&self, _label: &str, _ui: &mut egui::Ui) {
-        todo!()
-    }
-
-    fn inspect_mut(&mut self, _label: &str, ui: &mut egui::Ui) {
+impl eframe::App for Pacmap {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let current = self.current.clone();
-        ui.columns(2, |columns| {
-            match self.get_package_info(&current) {
-                Some(pi) => pi.inspect(current.as_str(), &mut columns[0]),
-                None => format!(
-                    "No package info for {}, relaunch with a different starting package.",
-                    &self.current
-                )
-                .inspect("", &mut columns[0]),
-            }
 
-            if let Some(next_s) = NEXT.with_borrow_mut(|n| n.take()) {
-                if !self.graph_indices.contains_key(&next_s) {
-                    if let Some((name, pi)) = pacman_queery(next_s.as_str()) {
-                        self.add_package_and_deps(name, pi);
-                    }
+        egui::SidePanel::left("left").show(ctx, |ui| {
+            ScrollArea::vertical().id_source("left col").show(ui, |ui| {
+                match self.get_package_info(&current) {
+                    Some(pi) => pi.inspect(current.as_str(), ui),
+                    None => format!(
+                        "No package info for {}, relaunch with a different starting package.",
+                        &self.current
+                    )
+                    .inspect("", ui),
                 }
-                self.history.push(PackageName(next_s.clone()));
-                self.current = next_s;
-            }
-
-            self.history.inspect("selection history", &mut columns[0]);
-            self.inspect_graph(&mut columns[1]);
+            });
         });
+
+        if let Some(next_s) = NEXT.with_borrow_mut(|n| n.take()) {
+            if !self.graph_indices.contains_key(&next_s) {
+                if let Some((name, pi)) = pacman_queery(next_s.as_str()) {
+                    self.add_package_and_deps(name, pi);
+                }
+            }
+            self.history.push(PackageName(next_s.clone()));
+            self.current = next_s;
+        }
+
+        egui::SidePanel::right("right").show(ctx, |ui| {
+            ScrollArea::vertical()
+                .id_source("right col")
+                .show(ui, |ui| {
+                    self.package_infos
+                        .sim_settings
+                        .inspect_mut("force graph settings", ui);
+                    self.history.inspect("selection history", ui);
+                });
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            self.inspect_graph(ui);
+        });
+
+        self.package_infos.update();
     }
+}
+
+fn main() -> eframe::Result<()> {
+    run_native(
+        "Pacmap",
+        Default::default(),
+        Box::new(|_| Box::new(Pacmap::default())),
+    )
 }
