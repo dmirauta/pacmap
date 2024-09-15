@@ -1,5 +1,5 @@
 use egui::Pos2;
-use egui_inspect::{EguiInspect, InspectNumber};
+use egui_inspect::{egui, EguiInspect, InspectNumber};
 use fdg::{
     fruchterman_reingold::{FruchtermanReingold, FruchtermanReingoldConfiguration},
     nalgebra::{Const, OPoint},

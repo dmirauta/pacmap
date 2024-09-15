@@ -1,138 +1,19 @@
-use std::{cell::RefCell, collections::HashMap, f32::consts::PI, process::Command, str::FromStr};
+use std::{cell::RefCell, collections::HashMap, f32::consts::PI};
 
-use eframe::run_native;
 use egui::{Pos2, ScrollArea, Vec2};
 use egui_graphs::{GraphView, Node, SettingsInteraction, SettingsNavigation, SettingsStyle};
-use egui_inspect::EguiInspect;
+use egui_inspect::{eframe, egui, EframeMain, EguiInspect};
 
 use clap::Parser;
 use fgraph::EguiForceGraph;
+use package_info::{pacman_queery, PackageInfo, PackageName};
 use petgraph::graph::NodeIndex;
 
 mod fgraph;
+mod package_info;
 
 thread_local! {
     static NEXT: RefCell<Option<String>> = Default::default();
-}
-
-#[derive(Debug, Default, Clone)]
-struct PackageName(String);
-
-impl From<String> for PackageName {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl EguiInspect for PackageName {
-    fn inspect(&self, _label: &str, ui: &mut egui::Ui) {
-        if ui.button(self.0.as_str()).clicked() {
-            NEXT.with_borrow_mut(|n| *n = Some(self.0.clone()));
-        }
-    }
-
-    fn inspect_mut(&mut self, _label: &str, _ui: &mut egui::Ui) {
-        todo!()
-    }
-}
-
-#[derive(EguiInspect, Default, Debug, Clone)]
-struct OptionalDep {
-    package_name: String,
-    reason: String,
-}
-
-impl FromStr for OptionalDep {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut sp = s.split(": ");
-        match (sp.next(), sp.next()) {
-            (Some(package_name), Some(reason)) => Ok(Self {
-                package_name: package_name.trim().to_string(),
-                reason: reason.into(),
-            }),
-            _ => Err("Unexpected OptionalDep format".into()),
-        }
-    }
-}
-
-// NOTE: Clone added as Graph requirement
-#[derive(Debug, EguiInspect, Default, Clone)]
-struct PackageInfo {
-    depends: Vec<PackageName>,
-    optional: Vec<OptionalDep>,
-    required_by: Vec<PackageName>,
-    other: HashMap<String, String>,
-}
-
-/// space separated string vec
-fn sssv(s: String) -> Vec<PackageName> {
-    s.split_whitespace()
-        .map(|s| String::from(s).into())
-        .collect()
-}
-
-fn pacman_queery(name: impl AsRef<str>) -> Option<(String, PackageInfo)> {
-    let out = Command::new("pacman")
-        .arg("-Qi")
-        .arg(name.as_ref())
-        .output();
-    match out {
-        Ok(o) => {
-            let package_info = String::from_utf8(o.stdout).unwrap();
-            if package_info.is_empty() || &package_info[..=6] == "error:" {
-                None
-            } else {
-                Some(PackageInfo::parse(package_info))
-            }
-        }
-        Err(e) => {
-            dbg!(e);
-            None
-        }
-    }
-}
-
-impl PackageInfo {
-    fn parse(s: String) -> (String, Self) {
-        let mut other = HashMap::new();
-        let mut optional = vec![];
-
-        for l in s.lines().filter(|l| !l.is_empty()) {
-            let mut sp = l.split(" : ");
-            let key = sp.next();
-            let val = sp.next();
-            if let Some(v) = val {
-                let k: String = key.unwrap().into();
-                if k != "Optional Deps" {
-                    other.insert(k.trim().into(), v.into());
-                } else {
-                    optional.push(v.parse().unwrap());
-                }
-            } else {
-                let k: String = key.unwrap().into();
-                if let Ok(pi) = k.parse() {
-                    optional.push(pi);
-                }
-            }
-        }
-
-        let failure = format!("Failed parsing {s}");
-        let name = other.remove("Name").expect(failure.as_str());
-        let depends = sssv(other.remove("Depends On").expect(failure.as_str()));
-        let required_by = sssv(other.remove("Required By").expect(failure.as_str()));
-
-        (
-            name,
-            Self {
-                depends,
-                optional,
-                required_by,
-                other,
-            },
-        )
-    }
 }
 
 #[derive(Parser)]
@@ -142,6 +23,8 @@ struct PacmapArgs {
     starting_package: Option<String>,
 }
 
+#[derive(EframeMain)]
+#[eframe_main(no_eframe_app_derive)]
 struct Pacmap {
     current: String,
     graph_indices: HashMap<String, NodeIndex>,
@@ -253,9 +136,12 @@ impl eframe::App for Pacmap {
         egui::SidePanel::left("left").show(ctx, |ui| {
             ScrollArea::vertical().id_source("left col").show(ui, |ui| {
                 match self.get_package_info(&current) {
-                    Some(pi) => pi.inspect(current.as_str(), ui),
+                    Some(pi) => pi.inspect(
+                        format!("currently selected package ({current})").as_str(),
+                        ui,
+                    ),
                     None => format!(
-                        "No package info for {}, relaunch with a different starting package.",
+                        "No package info for {}, try a different package (relaunch if first).",
                         &self.current
                     )
                     .inspect("", ui),
@@ -274,6 +160,11 @@ impl eframe::App for Pacmap {
         }
 
         egui::SidePanel::right("right").show(ctx, |ui| {
+            ui.label("Hover here for help").on_hover_text_at_pointer(
+                "Click&drag with LMB,
+CTRL+scroll wheel for zoom,
+select packages to be added to the graph in the left&right pannels.",
+            );
             ScrollArea::vertical()
                 .id_source("right col")
                 .show(ui, |ui| {
@@ -290,12 +181,4 @@ impl eframe::App for Pacmap {
 
         self.package_infos.update();
     }
-}
-
-fn main() -> eframe::Result<()> {
-    run_native(
-        "Pacmap",
-        Default::default(),
-        Box::new(|_| Box::new(Pacmap::default())),
-    )
 }
