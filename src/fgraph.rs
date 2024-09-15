@@ -20,15 +20,10 @@ pub struct SettingsSimulation {
 
 impl Default for SettingsSimulation {
     fn default() -> Self {
-        let FruchtermanReingoldConfiguration {
-            dt,
-            cooloff_factor,
-            scale,
-        } = Default::default();
         Self {
-            dt,
-            cooloff_factor,
-            scale,
+            dt: 0.2,
+            cooloff_factor: 0.975,
+            scale: 180.0,
             active: false,
         }
     }
@@ -138,6 +133,18 @@ impl<N: Clone, E: Clone> EguiForceGraph<N, E> {
                 .add_edge_with_label(start, end, edge_data.clone(), label.clone());
         let endpoints = self.egui_graph.edge_endpoints(g_idx).unwrap();
         self.sim_graph.add_edge(start, end, endpoints);
+    }
+
+    pub fn add_unique_edge_with_label(
+        &mut self,
+        start: NodeIndex,
+        end: NodeIndex,
+        edge_data: E,
+        label: String,
+    ) {
+        if self.egui_graph.edges_connecting(start, end).count() == 0 {
+            self.add_edge_with_label(start, end, edge_data, label);
+        }
     }
 
     pub fn sync_graph_pos_to_sim(&mut self) {
