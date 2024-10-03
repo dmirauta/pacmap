@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-egui_inspect = { git = "https://github.com/dmirauta/egui_inspect", branch = "0_28" }
+egui_inspect = { git = "https://github.com/dmirauta/egui_inspect", branch = "0_29" }
 clap = { version = "4.5", features = ["derive"] }
 petgraph = { version = "0.6.5" }
-egui_graphs = { version = "0.21" }
+egui_graphs = { version = "0.22" }
 fdg = { git = "https://github.com/grantshandy/fdg", commit = "50755f1" }

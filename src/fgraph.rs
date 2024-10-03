@@ -9,7 +9,7 @@ use petgraph::{graph::NodeIndex, stable_graph::StableGraph};
 
 #[derive(EguiInspect, Clone)]
 pub struct SettingsSimulation {
-    #[inspect(slider, min = 0.001, max = 1.0)]
+    #[inspect(slider, min = 0.001, max = 0.45)]
     pub dt: f32,
     #[inspect(slider, min = 0.001, max = 1.0)]
     pub cooloff_factor: f32,
@@ -22,7 +22,7 @@ impl Default for SettingsSimulation {
     fn default() -> Self {
         Self {
             dt: 0.2,
-            cooloff_factor: 0.975,
+            cooloff_factor: 0.45,
             scale: 180.0,
             active: false,
         }

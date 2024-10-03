@@ -130,7 +130,7 @@ impl eframe::App for Pacmap {
         let current = self.current.clone();
 
         egui::SidePanel::left("left").show(ctx, |ui| {
-            ScrollArea::vertical().id_source("left col").show(ui, |ui| {
+            ScrollArea::vertical().id_salt("left col").show(ui, |ui| {
                 match self.package_infos.get(&current) {
                     Some(pi) => pi.inspect(
                         format!("currently selected package ({current})").as_str(),
@@ -155,16 +155,14 @@ impl eframe::App for Pacmap {
             ui.label("Hover here for help").on_hover_text_at_pointer(
                 "Click&drag with LMB,
 CTRL+scroll wheel for zoom,
-select packages to be added to the graph in the left&right pannels.",
+select packages to be added to the graph in the left&right panels.",
             );
-            ScrollArea::vertical()
-                .id_source("right col")
-                .show(ui, |ui| {
-                    self.graph
-                        .sim_settings
-                        .inspect_mut("force graph settings", ui);
-                    self.history.inspect("selection history", ui);
-                });
+            ScrollArea::vertical().id_salt("right col").show(ui, |ui| {
+                self.graph
+                    .sim_settings
+                    .inspect_mut("force graph settings", ui);
+                self.history.inspect("selection history", ui);
+            });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
